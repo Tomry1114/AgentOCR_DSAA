@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GLIBC_ROOT="${GLIBC_ROOT:-/hpc2ssd/softwares/GLIBC/2.34}"
+CONDA_ENV_DIR="${CONDA_ENV_DIR:-/hpc2hdd/home/rtang906/.conda/envs/AgentOCR}"
+PYTHON_BIN="${PYTHON_BIN_OVERRIDE:-${CONDA_ENV_DIR}/bin/python}"
+LOADER_BIN="${GLIBC_ROOT}/lib/ld-linux-x86-64.so.2"
+
+if [[ ! -x "${LOADER_BIN}" ]]; then
+    echo "Missing glibc loader: ${LOADER_BIN}" >&2
+    exit 1
+fi
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+    echo "Missing python executable: ${PYTHON_BIN}" >&2
+    exit 1
+fi
+
+export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
+
+library_path_parts=("${GLIBC_ROOT}/lib")
+shopt -s nullglob
+
+for nvidia_lib_dir in "${CONDA_ENV_DIR}"/lib/python*/site-packages/nvidia/*/lib; do
+    if [[ -d "${nvidia_lib_dir}" ]]; then
+        library_path_parts+=("${nvidia_lib_dir}")
+    fi
+done
+
+if [[ -n "${CUDA_HOME:-}" && -d "${CUDA_HOME}/lib64" ]]; then
+    library_path_parts+=("${CUDA_HOME}/lib64")
+fi
+
+if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+    IFS=':' read -r -a current_ld_paths <<< "${LD_LIBRARY_PATH}"
+    for path_entry in "${current_ld_paths[@]}"; do
+        if [[ -n "${path_entry}" && -d "${path_entry}" ]]; then
+            library_path_parts+=("${path_entry}")
+        fi
+    done
+fi
+
+library_path_parts+=(
+    "${CONDA_ENV_DIR}/lib"
+    "/lib/x86_64-linux-gnu"
+    "/usr/lib/x86_64-linux-gnu"
+    "/lib64"
+    "/usr/lib64"
+)
+
+shopt -u nullglob
+
+library_path="$(IFS=:; echo "${library_path_parts[*]}")"
+
+exec "${LOADER_BIN}" \
+    --library-path "${library_path}" \
+    "${PYTHON_BIN}" "$@"
